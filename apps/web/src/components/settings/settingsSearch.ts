@@ -670,6 +670,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["auto pull default branch current checkout fast forward upstream"],
   },
   {
+    id: "pull-request-background-activity",
+    title: "Pull request background activity",
+    to: "/settings/source-control",
+    searchTerms: [
+      "pull request github cli gh automatic discover refresh background disable off stale",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "pull-request-merge-method",
     title: "Default merge method",
     to: "/settings/source-control",

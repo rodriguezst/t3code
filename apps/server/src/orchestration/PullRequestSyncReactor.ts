@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
 
@@ -128,6 +129,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
@@ -152,6 +154,7 @@ export const make = Effect.gen(function* () {
       Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.logWarning(message, fields);
 
   const sweep = Effect.fn("PullRequestSyncReactor.sweep")(function* (requestedKey?: string) {
+    if (!(yield* settings.getSettings).pullRequestBackgroundActivityEnabled) return;
     const threads = yield* snapshots.listThreadsWithPullRequests();
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);

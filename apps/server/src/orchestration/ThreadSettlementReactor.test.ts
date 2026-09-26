@@ -505,6 +505,36 @@ describe("ThreadSettlementReactor", () => {
         }),
       ),
   );
+  it.effect("keeps inactivity settlement local and skips PR lookups when disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const old = makeThread("old", { branch: "feature", latestUserMessageAt: "2026-08-01" });
+        const savedBranch = makeThread("saved-branch", { branch: "feature" });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([old, savedBranch]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: 3,
+            sidebarAutoSettleOnMerge: true,
+            pullRequestBackgroundActivityEnabled: false,
+          },
+          branchPullRequest: () => Effect.die("background settlement must not query branches"),
+          pullRequestSummary: () => Effect.die("background settlement must not query PR summaries"),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
+            [old.id, savedBranch.id],
+          );
+          assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
   it.effect("skips the branch recheck when a terminal link would settle nothing", () =>
     Effect.scoped(
       Effect.gen(function* () {

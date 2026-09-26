@@ -95,6 +95,9 @@ export const make = Effect.gen(function* () {
     if (!autoSettlementConfigured(settings)) {
       return;
     }
+    // Inactivity decisions stay local. Every remaining candidate needs a PR
+    // lookup, so stop when the user disabled background hosting activity.
+    const pullRequestBackgroundEnabled = settings.pullRequestBackgroundActivityEnabled;
     const snapshot = yield* readSweepSnapshot(snapshots, threadId ?? null);
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
@@ -155,6 +158,7 @@ export const make = Effect.gen(function* () {
     ))
       .filter((thread) => thread !== null)
       .filter((thread) => !thread.pullRequests.some((link) => link.source !== "stack-dismissed"));
+    if (!pullRequestBackgroundEnabled) return;
 
     // Use the same cwd as PR discovery so both paths share GitManager's cache.
     const lookupCwdByThreadId = new Map<string, string>();

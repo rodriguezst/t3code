@@ -545,6 +545,20 @@ describe("serverSettings helpers", () => {
     expect(current.usagePriceOverrides["example-model"]?.cacheReadCostPerMillionTokens).toBe(0.5);
   });
 
+  it("defaults PR background activity on and preserves explicit disablement across profile changes", () => {
+    expect(DEFAULT_SERVER_SETTINGS.pullRequestBackgroundActivityEnabled).toBe(true);
+
+    const disabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      pullRequestBackgroundActivityEnabled: false,
+    });
+    expect(disabled.pullRequestBackgroundActivityEnabled).toBe(false);
+
+    const profileChanged = applyServerSettingsPatch(disabled, {
+      backgroundActivity: { schemaVersion: 1, profile: "battery-saver", overrides: {} },
+    });
+    expect(profileChanged.pullRequestBackgroundActivityEnabled).toBe(false);
+  });
+
   it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {
     const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       backgroundActivity: {

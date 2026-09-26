@@ -1,5 +1,7 @@
 import {
   CheckpointRef,
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings as ServerSettingsValue,
   EventId,
   GitManagerError,
   ProjectId,
@@ -34,6 +36,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
 import { ServerActivation } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./Layers/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import {
@@ -143,6 +146,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   readonly existingWorktrees?: ReadonlyArray<string>;
   readonly project?: OrchestrationProjectShell;
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver["Service"]["resolve"];
+  readonly settings?: ServerSettingsValue;
   /** Serve full sweep reads from this instead of `threads`. */
   readonly getShellSnapshot?: ProjectionSnapshotQueryShape["getShellSnapshot"];
 }) {
@@ -162,6 +166,8 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   >([]);
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   let uuid = 0;
+  const settingsRef = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
+  const settingsChanges = yield* PubSub.unbounded<ServerSettingsValue>();
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
       getShellSnapshot: (readOptions) =>
@@ -246,6 +252,19 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
         digest: (_algorithm, data) => Effect.succeed(data),
       }),
     ),
+    Layer.succeed(
+      ServerSettingsService,
+      ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Ref.get(settingsRef),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.fromPubSub(settingsChanges),
+        subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+          Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        ),
+      }),
+    ),
     FileSystem.layerNoop({
       exists: (path) => Effect.succeed(options.existingWorktrees?.includes(path) ?? false),
     }),
@@ -262,6 +281,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
 
   return {
     start,
+    activation,
     reads,
     snapshots,
     commands,
@@ -459,6 +479,40 @@ describe("ThreadPullRequestReactor", () => {
           yield* Queue.take(fixture.reads);
           yield* reactor.drain;
           expect((yield* Ref.get(fixture.commands))[0]?.branchPullRequest).toEqual(reference(42));
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips startup, backfill, and event-triggered discovery when disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeHarness({
+          threads: [thread("disabled")],
+          settings: { ...DEFAULT_SERVER_SETTINGS, pullRequestBackgroundActivityEnabled: false },
+          branchPullRequest: () => Effect.die("background discovery must not run"),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadPullRequestReactor.ThreadPullRequestReactor;
+          yield* reactor.start();
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* reactor.drain;
+          yield* fixture.publish({
+            type: "thread.created",
+            sequence: 2,
+            eventId: EventId.make("thread-created"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("disabled"),
+            occurredAt: NOW,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            payload: { threadId: ThreadId.make("disabled"), thread: thread("disabled") },
+          });
+          yield* reactor.drain;
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
+          expect(yield* Ref.get(fixture.commands)).toEqual([]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

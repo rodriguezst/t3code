@@ -1,5 +1,7 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EventId,
+  type ServerSettings,
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
@@ -28,6 +30,7 @@ import { TestClock } from "effect/testing";
 
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ServerActivation } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -165,6 +168,7 @@ interface HarnessOptions {
   readonly stack?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestStack | null, PullRequestOperationError>;
+  readonly settings?: ServerSettings;
 }
 
 const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: HarnessOptions) {
@@ -208,6 +212,8 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     return Effect.die(new Error(`Unexpected command: ${command.type}`));
   };
 
+  const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
+  const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
       listThreadsWithPullRequests: () =>
@@ -235,6 +241,19 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       ),
       latestSequence: Effect.succeed(0),
     }),
+    Layer.succeed(
+      ServerSettingsService,
+      ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Ref.get(settings),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.fromPubSub(settingsChanges),
+        subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+          Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        ),
+      }),
+    ),
     Layer.succeed(ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
   );
@@ -328,6 +347,35 @@ describe("PullRequestSyncReactor", () => {
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
           assert.strictEqual((yield* Ref.get(fixture.syncCommands))[0]?.snapshot.state, "merged");
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+  it.effect("skips automatic and requested sweeps when background activity is disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(7)] })]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, pullRequestBackgroundActivityEnabled: false },
+          summary: () => Effect.die("background sync must not run"),
+          stack: () => Effect.die("background sync must not run"),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+          yield* reactor.start();
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.stackCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.syncCommands), []);
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 7,
+          });
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.syncCommands), []);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

@@ -18,6 +18,7 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
+import { ScopedSwitch } from "./ScopedSwitch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
@@ -62,6 +63,7 @@ import {
   PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
+  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
@@ -423,6 +425,32 @@ function GitFetchIntervalSettings() {
   );
 }
 
+function PullRequestBackgroundActivitySettings() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const setting = searchableSetting("pull-request-background-activity");
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["pullRequestBackgroundActivityEnabled"]}
+      id={setting.id}
+      title={setting.title}
+      description="Automatically discover and refresh pull requests in the background. Disable to prevent background PR lookups, including GitHub CLI activity."
+      control={
+        <ScopedSwitch
+          settingKeys={["pullRequestBackgroundActivityEnabled"]}
+          checked={settings.pullRequestBackgroundActivityEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ pullRequestBackgroundActivityEnabled: Boolean(checked) })
+          }
+          aria-label={setting.title}
+        />
+      }
+    />
+  );
+}
+
 function SourceControlSectionSkeleton({
   title,
   headerAction,
@@ -545,6 +573,9 @@ export function SourceControlSettingsPanel() {
   return (
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="source-control" />
+      <SettingsSection title="Background activity">
+        <PullRequestBackgroundActivitySettings />
+      </SettingsSection>
       {environmentId === null ? (
         <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
           <p className="px-4 py-3 text-sm text-muted-foreground">
