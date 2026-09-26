@@ -1,6 +1,7 @@
 import {
   type ClaudeSettings,
   type ModelCapabilities,
+  type ServerProviderModel,
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
+  type ModelInfo,
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
@@ -220,8 +222,8 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   };
 }
 
-function nonEmptyProbeString(value: string): string | undefined {
-  const candidate = value.trim();
+function nonEmptyProbeString(value: string | undefined): string | undefined {
+  const candidate = value?.trim();
   return candidate ? candidate : undefined;
 }
 
@@ -236,6 +238,7 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models: ReadonlyArray<ClaudeDiscoveredModel>;
   /**
    * Subscription windows from the SDK's `get_usage` control request, or
    * `undefined` when the request itself failed. Absent windows on an
@@ -243,6 +246,74 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
 };
+
+type ClaudeDiscoveredModel = Pick<ModelInfo, "value" | "displayName"> & {
+  readonly resolvedModel?: string;
+};
+
+// Keep Claude's selectable value intact while reusing T3's richer metadata for
+// rows that resolve to a model this catalog already knows.
+function resolveClaudeInitializationModels(
+  discoveredModels: ReadonlyArray<ClaudeDiscoveredModel>,
+  fallbackModels: ReadonlyArray<ServerProviderModel>,
+  defaultCapabilities: ModelCapabilities,
+): ReadonlyArray<ServerProviderModel> {
+  const modelsBySlug = new Map(fallbackModels.map((model) => [model.slug, model]));
+  const modelsByAlias = new Map(
+    fallbackModels.flatMap((model) =>
+      (model.aliases ?? []).map((alias) => [alias.toLowerCase(), model] as const),
+    ),
+  );
+
+  return discoveredModels.flatMap((discovered) => {
+    const known =
+      (discovered.resolvedModel ? modelsBySlug.get(discovered.resolvedModel) : undefined) ??
+      modelsBySlug.get(discovered.value) ??
+      modelsByAlias.get(discovered.value.toLowerCase());
+
+    if (!known) {
+      return [
+        {
+          slug: discovered.value,
+          name: discovered.displayName,
+          isCustom: false,
+          capabilities: defaultCapabilities,
+        },
+      ];
+    }
+
+    return [
+      {
+        ...known,
+        slug: discovered.value,
+        name: discovered.displayName,
+      },
+    ];
+  });
+}
+
+function parseClaudeInitializationModels(
+  models: ReadonlyArray<ClaudeDiscoveredModel> | undefined,
+): ReadonlyArray<ClaudeDiscoveredModel> {
+  const modelsBySlug = new Map<string, ClaudeDiscoveredModel>();
+
+  for (const model of models ?? []) {
+    const slug = nonEmptyProbeString(model.value);
+    if (!slug) continue;
+
+    const resolvedModel = nonEmptyProbeString(model.resolvedModel);
+    const candidate = {
+      value: slug,
+      displayName: nonEmptyProbeString(model.displayName) ?? slug,
+      ...(resolvedModel ? { resolvedModel } : {}),
+    };
+    if (!modelsBySlug.has(slug)) {
+      modelsBySlug.set(slug, candidate);
+    }
+  }
+
+  return [...modelsBySlug.values()];
+}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -387,6 +458,7 @@ const probeClaudeCapabilities = (
           tokenSource: account?.tokenSource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
+          models: parseClaudeInitializationModels(init.models),
           ...(usage ? { usage } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
@@ -526,16 +598,26 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
+  const fallbackModels = resolveClaudeModelsForVersion(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
+  const discoveredModels = parseClaudeInitializationModels(capabilities?.models);
+  const baseModels =
+    discoveredModels.length > 0
+      ? resolveClaudeInitializationModels(
+          discoveredModels,
+          fallbackModels,
+          DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+        )
+      : fallbackModels;
+  const models = providerModelsFromSettings(
+    baseModels,
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);

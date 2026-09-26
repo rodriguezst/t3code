@@ -41,6 +41,15 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
 
+## Model discovery
+
+The Claude model picker uses the inventory reported by Claude Code when it provides one. For an
+Anthropic-compatible gateway, set `ANTHROPIC_BASE_URL` to the gateway endpoint in that Claude
+instance's **Environment variables**. Current Claude Code releases also require
+`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` to discover the gateway's models. If Claude Code
+does not report a usable inventory, T3 falls back to its bundled Claude list; manually added custom
+models remain available either way.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

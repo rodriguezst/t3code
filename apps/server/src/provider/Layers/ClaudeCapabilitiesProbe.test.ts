@@ -114,7 +114,13 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "      agents: [],",
           '      output_style: "default",',
           '      available_output_styles: ["default"],',
-          "      models: [],",
+          "      models: [",
+          "        { value: 'openai/gpt-test-via-gateway', displayName: 'Gateway GPT Test', description: '' },",
+          "        { value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'Claude Sonnet', description: '' },",
+          "        { value: 'openai/gpt-test-via-gateway', displayName: 'Duplicate', description: '' },",
+          "        { value: 'bare/gateway-model', displayName: '   ', description: '' },",
+          "        { value: '   ', displayName: 'Invalid', description: '' },",
+          "      ],",
           '      account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
           "    });",
           "  }",
@@ -157,6 +163,15 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             input: { hint: "[path]" },
           },
         ],
+        models: [
+          { value: "openai/gpt-test-via-gateway", displayName: "Gateway GPT Test" },
+          {
+            value: "sonnet",
+            displayName: "Claude Sonnet",
+            resolvedModel: "claude-sonnet-5",
+          },
+          { value: "bare/gateway-model", displayName: "bare/gateway-model" },
+        ],
         usage: {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
@@ -196,10 +211,39 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
       abortSignal = options?.abortController?.signal;
       return {
-        initializationResult: async () => ({
-          account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
-          commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
-        }),
+        initializationResult: async () =>
+          ({
+            account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+            commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
+            models: [
+              {
+                value: "openai/gpt-test-via-gateway",
+                displayName: "Gateway GPT Test",
+                description: "",
+              },
+              {
+                value: "sonnet",
+                resolvedModel: "claude-sonnet-5",
+                displayName: "Claude Sonnet",
+                description: "",
+              },
+              {
+                value: "openai/gpt-test-via-gateway",
+                displayName: "Duplicate",
+                description: "",
+              },
+              {
+                value: "bare/gateway-model",
+                displayName: "   ",
+                description: "",
+              },
+              {
+                value: "   ",
+                displayName: "Invalid",
+                description: "",
+              },
+            ],
+          }) as Awaited<ReturnType<ReturnType<typeof ClaudeSdk.query>["initializationResult"]>>,
         usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
           Deferred.doneUnsafe(usageStarted, Effect.void);
           return new Promise(() => {});
@@ -218,6 +262,15 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     assert.equal(capabilities?.tokenSource, "oauth");
     assert.deepEqual(capabilities?.slashCommands, [
       { name: "review", description: "Review changes", input: { hint: "[path]" } },
+    ]);
+    assert.deepEqual(capabilities?.models, [
+      { value: "openai/gpt-test-via-gateway", displayName: "Gateway GPT Test" },
+      {
+        value: "sonnet",
+        displayName: "Claude Sonnet",
+        resolvedModel: "claude-sonnet-5",
+      },
+      { value: "bare/gateway-model", displayName: "bare/gateway-model" },
     ]);
     assert.equal(capabilities?.usage, undefined);
     assert.equal(abortSignal?.aborted, true);

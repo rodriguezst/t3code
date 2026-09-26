@@ -35,6 +35,9 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { resolveClaudeModelsForVersion } from "../ClaudeModelCatalog.ts";
+import { SYNTHETIC_CLAUDE_MODEL_CATALOG } from "../ClaudeModelCatalog.testFixtures.ts";
+
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -151,6 +154,11 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models: ReadonlyArray<{
+    readonly value: string;
+    readonly displayName: string;
+    readonly resolvedModel?: string;
+  }>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -161,6 +169,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
+      models: [],
       ...overrides,
     });
 }
@@ -2763,6 +2772,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   tokenSource: undefined,
                   apiProvider: undefined,
                   slashCommands: [],
+                  models: [],
                   usage: { rate_limits_available: true, rate_limits: {} },
                   ...overrides,
                 }),
@@ -2887,6 +2897,92 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
         }).pipe(Effect.provide(recorded.layer));
       });
+
+      it.effect("uses the Claude initialization model inventory when it reports models", () =>
+        Effect.gen(function* () {
+          const gatewaySlug = "openai/gpt-test-via-gateway";
+          const status = yield* checkClaudeProviderStatus(
+            {
+              ...defaultClaudeSettings,
+              customModels: [
+                gatewaySlug,
+                {
+                  slug: "gateway/manual-model",
+                  name: "Manual Gateway Model",
+                },
+              ],
+            },
+            claudeCapabilities({
+              models: [
+                {
+                  value: "sonnet",
+                  displayName: "Claude Sonnet",
+                  resolvedModel: "claude-synthetic-standard",
+                },
+                { value: gatewaySlug, displayName: "Gateway GPT Test" },
+                { value: gatewaySlug, displayName: "Duplicate Gateway GPT Test" },
+                { value: "", displayName: "Invalid" },
+              ],
+            }),
+            undefined,
+            undefined,
+            SYNTHETIC_CLAUDE_MODEL_CATALOG,
+          );
+
+          assert.deepStrictEqual(
+            status.models.map((model) => [model.slug, model.name, model.isCustom]),
+            [
+              ["sonnet", "Claude Sonnet", false],
+              [gatewaySlug, "Gateway GPT Test", false],
+              ["gateway/manual-model", "Manual Gateway Model", true],
+            ],
+          );
+          assert.deepStrictEqual(
+            status.models[0]?.capabilities,
+            SYNTHETIC_CLAUDE_MODEL_CATALOG.models[1]?.model.capabilities,
+          );
+          assert.deepStrictEqual(status.models[1]?.capabilities, {
+            optionDescriptors: [],
+          });
+          assert.strictEqual(status.status, "ready");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "3.2.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("keeps the version-filtered catalog when Claude reports no models", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            noClaudeCapabilities,
+            undefined,
+            undefined,
+            SYNTHETIC_CLAUDE_MODEL_CATALOG,
+          );
+
+          assert.deepStrictEqual(
+            status.models.map((model) => model.slug),
+            resolveClaudeModelsForVersion(SYNTHETIC_CLAUDE_MODEL_CATALOG, "3.2.0").map(
+              (model) => model.slug,
+            ),
+          );
+          assert.strictEqual(status.status, "warning");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "3.2.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
 
       it.effect("includes probed claude slash commands in the provider snapshot", () =>
         Effect.gen(function* () {
