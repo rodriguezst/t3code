@@ -1335,10 +1335,13 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  /** Server-owned scheduled sends must never steer an already active thread. */
+  onlyIfIdle: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
+export type ThreadTurnStartCommand = typeof ThreadTurnStartCommand.Type;
 
-const ClientThreadTurnStartCommand = Schema.Struct({
+export const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,

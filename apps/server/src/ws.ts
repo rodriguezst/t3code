@@ -167,6 +167,7 @@ import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
+import * as ScheduledSendReactor from "./orchestration/ScheduledSendReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -667,6 +668,7 @@ const makeWsRpcLayer = (
       const pullRequests = yield* PullRequestService.PullRequestService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+      const scheduledSends = yield* ScheduledSendReactor.ScheduledSendReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -3320,6 +3322,15 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.subscribeProjectClones, projectCloneTracker.stream, {
             "rpc.aggregate": "source-control",
           }),
+        [WS_METHODS.scheduledSendCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.scheduledSendCreate, scheduledSends.create(input)),
+        [WS_METHODS.scheduledSendCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scheduledSendCancel,
+            scheduledSends.cancel(input.id).pipe(Effect.map((cancelled) => ({ cancelled }))),
+          ),
+        [WS_METHODS.subscribeScheduledSends]: () =>
+          observeRpcStream(WS_METHODS.subscribeScheduledSends, scheduledSends.stream),
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,

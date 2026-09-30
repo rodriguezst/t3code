@@ -21,6 +21,7 @@ import {
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type MessageId,
@@ -498,6 +499,8 @@ import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFi
 import { assetEnvironment } from "../state/assets";
 import { readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { scheduledSendEnvironment } from "../state/scheduledSends";
+import { ScheduledThreadSends } from "./chat/ScheduledThreadSends";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
@@ -1522,6 +1525,14 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const scheduleThreadSend = useAtomCommand(scheduledSendEnvironment.create, {
+    reportFailure: false,
+  });
+  const scheduledSubmissionRef = useRef<{
+    fingerprint: string;
+    commandId: CommandId;
+    messageId: MessageId;
+  } | null>(null);
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -7322,8 +7333,17 @@ export default function ChatView(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    scheduledAt?: string,
   ) => {
     e?.preventDefault();
+    const scheduledDraftSnapshot = scheduledAt
+      ? useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+      : null;
+    if (
+      scheduledAt &&
+      (!isServerThread || serverConfig?.environment.capabilities.scheduledSends !== true)
+    )
+      return;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -7501,7 +7521,7 @@ export default function ChatView(props: ChatViewProps) {
       composerReviewComments.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
-    if (feedbackCommand && multipleModelSelections === null) {
+    if (!scheduledAt && feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.session === null) {
         toastManager.add(
           stackedThreadToast({
@@ -7552,6 +7572,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (
       !directAnnotation &&
+      !scheduledAt &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
       activeProposedPlan &&
@@ -7665,6 +7686,7 @@ export default function ChatView(props: ChatViewProps) {
       );
     if (
       !directAnnotation &&
+      !scheduledAt &&
       activeThreadKey &&
       (queueStillSending ||
         (phase === "running" &&
@@ -7711,6 +7733,10 @@ export default function ChatView(props: ChatViewProps) {
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
+    if (scheduledAt && shouldCreateWorktree) {
+      setThreadError(threadIdForSend, "Prepare this thread's worktree before scheduling a send.");
+      return false;
+    }
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
@@ -7850,6 +7876,117 @@ export default function ChatView(props: ChatViewProps) {
         sendInFlightRef.current = false;
         setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
         return;
+      }
+    }
+
+    if (scheduledAt) {
+      try {
+        const attachments = await Promise.all(
+          composerAttachmentsSnapshot.map(async (attachment) => {
+            const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
+            if (uploaded) return uploaded;
+            if (attachment.type !== "image") throw new Error("File upload has not finished.");
+            return {
+              type: "image" as const,
+              id: attachment.id,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+              dataUrl: await readFileAsDataUrl(attachment.file),
+              ...(attachment.source ? { source: attachment.source } : {}),
+            };
+          }),
+        );
+        const context = buildOutgoingMessageContext(
+          attachments.map((attachment) => attachment.id ?? ""),
+        );
+        const fingerprint = JSON.stringify([
+          threadIdForSend,
+          scheduledAt,
+          outgoingMessageText,
+          composerAttachmentsSnapshot.map((attachment) => attachment.id),
+          context,
+          ctxSelectedModelSelection,
+          runtimeMode,
+          sendInteractionMode,
+        ]);
+        if (scheduledSubmissionRef.current?.fingerprint !== fingerprint) {
+          scheduledSubmissionRef.current = {
+            fingerprint,
+            commandId: CommandId.make(randomUUID()),
+            messageId: newMessageId(),
+          };
+        }
+        const result = await scheduleThreadSend({
+          environmentId,
+          input: {
+            commandId: scheduledSubmissionRef.current.commandId,
+            threadId: threadIdForSend,
+            message: {
+              messageId: scheduledSubmissionRef.current.messageId,
+              role: "user",
+              text: outgoingMessageText,
+              attachments,
+              ...(context ? { context } : {}),
+            },
+            modelSelection: ctxSelectedModelSelection,
+            runtimeMode,
+            interactionMode: sendInteractionMode,
+            scheduledAt,
+          },
+        });
+        if (result._tag === "Failure") {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            threadIdForSend,
+            error instanceof Error ? error.message : "Could not schedule the message.",
+          );
+          return false;
+        }
+        if (result.value.phase !== "pending") {
+          setThreadError(
+            threadIdForSend,
+            result.value.reason ??
+              "This schedule has already ended. Check Scheduled sends before creating another.",
+          );
+          return false;
+        }
+        const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+        // Upload acknowledgements replace file entries without changing the user's draft.
+        if (
+          currentDraft?.prompt === scheduledDraftSnapshot?.prompt &&
+          currentDraft?.images === scheduledDraftSnapshot?.images &&
+          currentDraft?.files.length === scheduledDraftSnapshot?.files.length &&
+          currentDraft?.files.every(
+            (file, index) => file.id === scheduledDraftSnapshot?.files[index]?.id,
+          ) &&
+          currentDraft?.terminalContexts === scheduledDraftSnapshot?.terminalContexts &&
+          currentDraft?.previewAnnotations === scheduledDraftSnapshot?.previewAnnotations &&
+          currentDraft?.reviewComments === scheduledDraftSnapshot?.reviewComments
+        ) {
+          if (currentRouteThreadKeyRef.current === routeThreadKey) promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          if (currentRouteThreadKeyRef.current === routeThreadKey)
+            composerRef.current?.resetCursorState();
+          if (turnUsesAttachmentUploads) releaseDraftAttachments(composerAttachmentsSnapshot);
+          for (const image of composerImagesSnapshot) revokeBlobPreviewUrl(image.previewUrl);
+        }
+        scheduledSubmissionRef.current = null;
+        setThreadError(threadIdForSend, null);
+        toastManager.add({
+          type: "success",
+          title: "Send scheduled",
+          description: `One attempt at ${new Date(scheduledAt).toLocaleString()} while this server stays running.`,
+        });
+        return true;
+      } catch (error) {
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Could not schedule the message.",
+        );
+        return false;
+      } finally {
+        sendInFlightRef.current = false;
       }
     }
 
@@ -9981,6 +10118,12 @@ export default function ChatView(props: ChatViewProps) {
                     <ComposerSurface.Shell contextStrip={showComposerContextStrip}>
                       <ComposerSurface.Host>
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
+                          {isServerThread && activeThread ? (
+                            <ScheduledThreadSends
+                              environmentId={environmentId}
+                              threadId={activeThread.id}
+                            />
+                          ) : null}
                           <ChatComposer
                             multipleModelSelections={multipleModelSelections}
                             supportsMultipleModels={
@@ -10089,6 +10232,18 @@ export default function ChatView(props: ChatViewProps) {
                             onPageScrollRelease={onComposerPageScrollRelease}
                             onCompactContext={onCompactContext}
                             onSend={onSend}
+                            {...(isServerThread &&
+                            serverConfig?.environment.capabilities.scheduledSends === true
+                              ? {
+                                  onScheduleSend: async (scheduledAt: string) =>
+                                    (await onSend(
+                                      undefined,
+                                      "foreground",
+                                      undefined,
+                                      scheduledAt,
+                                    )) === true,
+                                }
+                              : {})}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

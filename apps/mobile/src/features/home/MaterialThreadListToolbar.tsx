@@ -14,6 +14,7 @@ import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import { useMaterialToolbarLayout } from "../../components/useMaterialToolbarLayout";
+import { ScheduledSendsMenu } from "../threads/ScheduledSendsMenu";
 
 /** One toolbar height for the compact list and expanded sidebar, including search. */
 export function MaterialThreadListToolbar(props: {
@@ -102,6 +103,7 @@ export function MaterialThreadListToolbar(props: {
                   brand={<CompactBrandTitle allowFontScaling={false} />}
                 />
               </View>
+              <ScheduledSendsMenu />
               <AndroidHeaderIconButton
                 accessibilityLabel="Search threads"
                 icon="magnifyingglass"

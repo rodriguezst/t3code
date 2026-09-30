@@ -242,6 +242,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        if (envelope.command.type === "thread.turn.start" && envelope.command.onlyIfIdle) {
+          const shell = yield* projectionSnapshotQuery.getThreadShellById(
+            envelope.command.threadId,
+          );
+          if (
+            Option.isSome(shell) &&
+            (shell.value.hasPendingApprovals || shell.value.hasPendingUserInput)
+          ) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail: "Scheduled send skipped: thread busy.",
+            });
+          }
+        }
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,

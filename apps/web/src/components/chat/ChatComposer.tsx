@@ -255,6 +255,7 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ScheduleSendButton } from "./ScheduleSendButton";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -1447,6 +1448,7 @@ export interface ChatComposerProps {
   // Callbacks
   onCompactContext: () => void;
   onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
+  onScheduleSend?: (scheduledAt: string) => Promise<boolean>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -1563,6 +1565,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollRelease,
     onCompactContext,
     onSend,
+    onScheduleSend,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -7041,6 +7044,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {onScheduleSend ? (
+                    <ScheduleSendButton
+                      disabled={
+                        isSendBusy ||
+                        isConnecting ||
+                        environmentUnavailable !== null ||
+                        !composerSendState.hasSendableContent ||
+                        pendingPrimaryAction !== null
+                      }
+                      onSchedule={onScheduleSend}
+                    />
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

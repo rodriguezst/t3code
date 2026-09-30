@@ -134,4 +134,136 @@ it.layer(NodeServices.layer)("thread.message.user.append", (it) => {
       ]);
     }),
   );
+
+  it.effect(
+    "rejects scheduled sends while the thread is running without blocking manual steering",
+    () =>
+      Effect.gen(function* () {
+        const readModel = yield* readModelWithThread;
+        const busy = {
+          ...readModel,
+          threads: readModel.threads.map((thread) => ({
+            ...thread,
+            session: {
+              threadId,
+              status: "running" as const,
+              providerName: "codex" as const,
+              runtimeMode: "full-access" as const,
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+          })),
+        };
+        const error = yield* Effect.flip(
+          decideOrchestrationCommand({
+            command: { ...turnStartCommand, onlyIfIdle: true },
+            readModel: busy,
+          }),
+        );
+        expect(error.message).toContain("thread busy");
+        yield* decideOrchestrationCommand({ command: turnStartCommand, readModel: busy });
+      }),
+  );
+
+  it.effect(
+    "rejects a scheduled send during the gap before a previously accepted turn starts",
+    () =>
+      Effect.gen(function* () {
+        const readModel = yield* readModelWithThread;
+        const first = yield* decideOrchestrationCommand({ command: turnStartCommand, readModel });
+        const events = Array.isArray(first) ? first : [first];
+        let next = readModel;
+        for (const [index, event] of events.entries())
+          next = yield* projectEvent(next, { ...event, sequence: 3 + index });
+        const error = yield* Effect.flip(
+          decideOrchestrationCommand({
+            command: {
+              ...turnStartCommand,
+              message: { ...turnStartCommand.message, messageId: MessageId.make("second-message") },
+              onlyIfIdle: true,
+            },
+            readModel: next,
+          }),
+        );
+        expect(error.message).toContain("thread busy");
+      }),
+  );
+
+  it.effect("a scheduled send applies its captured modes in the same decision as turn start", () =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const planned = yield* decideOrchestrationCommand({
+        command: {
+          ...turnStartCommand,
+          onlyIfIdle: true,
+          runtimeMode: "approval-required",
+          interactionMode: "plan",
+        },
+        readModel,
+      });
+      const events = Array.isArray(planned) ? planned : [planned];
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.runtime-mode-set",
+        "thread.interaction-mode-set",
+        "thread.message-sent",
+        "thread.turn-start-requested",
+      ]);
+      expect(events.at(-1)?.payload).toMatchObject({
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      });
+      let next = readModel;
+      for (const [index, event] of events.entries())
+        next = yield* projectEvent(next, { ...event, sequence: 3 + index });
+      expect(next.threads[0]).toMatchObject({
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      });
+    }),
+  );
+
+  it.effect("an old quota error does not hide a newly accepted turn awaiting its provider", () =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const withError = {
+        ...readModel,
+        threads: readModel.threads.map((thread) => ({
+          ...thread,
+          session: {
+            threadId,
+            status: "error" as const,
+            providerName: "codex" as const,
+            runtimeMode: "full-access" as const,
+            activeTurnId: null,
+            lastError: "Quota exhausted",
+            updatedAt: createdAt,
+          },
+        })),
+      };
+      // The old error alone must allow a quota-reset retry.
+      yield* decideOrchestrationCommand({
+        command: { ...turnStartCommand, onlyIfIdle: true },
+        readModel: withError,
+      });
+      const manual = { ...turnStartCommand, createdAt: "2026-08-24T10:00:01.000Z" };
+      const planned = yield* decideOrchestrationCommand({ command: manual, readModel: withError });
+      let next = readModel;
+      next = withError;
+      for (const [index, event] of (Array.isArray(planned) ? planned : [planned]).entries()) {
+        next = yield* projectEvent(next, { ...event, sequence: 3 + index });
+      }
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            ...manual,
+            onlyIfIdle: true,
+            message: { ...manual.message, messageId: MessageId.make("scheduled-after-manual") },
+          },
+          readModel: next,
+        }),
+      );
+      expect(error.message).toContain("thread busy");
+    }),
+  );
 });

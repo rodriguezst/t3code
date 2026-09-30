@@ -59,6 +59,7 @@ import {
 } from "../../state/use-composer-drafts";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject } from "../../state/entities";
+import { ScheduleSendControl, ScheduledSendsMenu } from "./ScheduledSendsMenu";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/AppText";
@@ -147,7 +148,7 @@ export interface ThreadComposerProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onSendMessage: (scheduledAt?: string) => Promise<MessageId | null>;
   /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
@@ -892,6 +893,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ) : null}
             {!isExpanded ? (
               <View className="flex-row items-center">
+                <ScheduledSendsMenu environmentId={props.environmentId} />
+                {props.serverConfig?.environment.capabilities.scheduledSends === true ? (
+                  <ScheduleSendControl
+                    disabled={!canSend || props.connectionState !== "connected"}
+                    onSchedule={props.onSendMessage}
+                  />
+                ) : null}
                 <ComposerDictationStartAction
                   state={voiceInput.state}
                   isAvailable={voiceInput.isAvailable}
@@ -1003,6 +1011,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       variant="primary"
                       disabled={!canSend}
                       onPress={handleSend}
+                    />
+                  ) : null}
+                  <ScheduledSendsMenu environmentId={props.environmentId} />
+                  {props.serverConfig?.environment.capabilities.scheduledSends === true ? (
+                    <ScheduleSendControl
+                      disabled={!canSend || props.connectionState !== "connected"}
+                      onSchedule={props.onSendMessage}
                     />
                   ) : null}
                 </View>

@@ -49,6 +49,20 @@ the oldest queued message now. Change `thread.steerQueuedMessage` in
 **Settings → Keybindings** to use another shortcut. It leaves the current draft
 in the composer and waits if the agent needs an approval or an answer.
 
+## Schedule a send
+
+In an existing thread, choose **Schedule send** beside the composer's send action
+and enter how many hours to wait. The environment's server makes one attempt
+using the message, attachments, model, and permission mode you selected.
+
+Keep that server running. You can close your browser or mobile app and view or
+cancel the same schedule from another device connected to that environment.
+The timer menu lists pending sends and their remaining time; use **×** to cancel.
+
+Pending sends expire when the server restarts or misses the deadline by more
+than a minute. A busy thread skips the send. Failed and skipped sends are not
+retried automatically; their prompts remain in the thread's activity history.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue

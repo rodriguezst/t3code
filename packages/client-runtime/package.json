@@ -211,6 +211,10 @@
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
     },
+    "./state/scheduled-sends": {
+      "types": "./src/state/scheduledSends.ts",
+      "default": "./src/state/scheduledSends.ts"
+    },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"

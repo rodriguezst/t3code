@@ -275,6 +275,14 @@ import {
   ProjectCloneSubscribeInput,
 } from "./projectClone.ts";
 import {
+  ScheduledSendCreateInput,
+  ScheduledSendSnapshot,
+  ScheduledSendList,
+  ScheduledSendCancelInput,
+  ScheduledSendCancelResult,
+  ScheduledSendError,
+} from "./scheduledSend.ts";
+import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -446,6 +454,9 @@ export const WS_METHODS = {
   projectCloneCancel: "projectClone.cancel",
   projectCloneRetry: "projectClone.retry",
   subscribeProjectClones: "subscribeProjectClones",
+  scheduledSendCreate: "scheduledSend.create",
+  scheduledSendCancel: "scheduledSend.cancel",
+  subscribeScheduledSends: "subscribeScheduledSends",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -959,6 +970,23 @@ const WsProjectCloneRetryRpc = Rpc.make(WS_METHODS.projectCloneRetry, {
 const WsSubscribeProjectClonesRpc = Rpc.make(WS_METHODS.subscribeProjectClones, {
   payload: ProjectCloneSubscribeInput,
   success: ProjectCloneListEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsScheduledSendCreateRpc = Rpc.make(WS_METHODS.scheduledSendCreate, {
+  payload: ScheduledSendCreateInput,
+  success: ScheduledSendSnapshot,
+  error: Schema.Union([ScheduledSendError, EnvironmentAuthorizationError]),
+});
+const WsScheduledSendCancelRpc = Rpc.make(WS_METHODS.scheduledSendCancel, {
+  payload: ScheduledSendCancelInput,
+  success: ScheduledSendCancelResult,
+  error: Schema.Union([ScheduledSendError, EnvironmentAuthorizationError]),
+});
+const WsSubscribeScheduledSendsRpc = Rpc.make(WS_METHODS.subscribeScheduledSends, {
+  payload: Schema.Struct({}),
+  success: ScheduledSendList,
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -1526,6 +1554,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectCloneCancelRpc,
   WsProjectCloneRetryRpc,
   WsSubscribeProjectClonesRpc,
+  WsScheduledSendCreateRpc,
+  WsScheduledSendCancelRpc,
+  WsSubscribeScheduledSendsRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

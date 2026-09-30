@@ -68,6 +68,7 @@ import {
 import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../src/orchestration/ThreadSettlementReactor.ts";
 import * as PullRequestSyncReactor from "../src/orchestration/PullRequestSyncReactor.ts";
+import * as ScheduledSendReactor from "../src/orchestration/ScheduledSendReactor.ts";
 import * as ThreadPullRequestReactor from "../src/orchestration/ThreadPullRequestReactor.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -416,6 +417,9 @@ export const makeOrchestrationIntegrationHarness = (
           drain: Effect.void,
           requestSync: () => Effect.void,
         }),
+      ),
+      Layer.provideMerge(
+        Layer.mock(ScheduledSendReactor.ScheduledSendReactor)({ start: () => Effect.void }),
       ),
       Layer.provideMerge(
         Layer.succeed(AgentAwarenessRelay.AgentAwarenessRelay, {
